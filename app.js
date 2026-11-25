@@ -29,13 +29,8 @@ function icon(name) {
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#dialog');
 const STORAGE = 'kvizovna-v1';
-const source = 'https://ctu.gov.cz/sites/default/files/obsah/2025_09_OFL_otazky.pdf';
-const topics = {A:'Radiokomunikační předpisy', B:'Radiokomunikační provoz', C:'Elektrotechnika a radiotechnika'};
-const ofl = {
-  id:'ofl', title:'OFL · Radiotelefonista', questions: window.OFL_ROWS.map(([id, text, correct, ...wrong]) => ({
-    id, text, topic:topics[id[0]], options:[correct, ...wrong], correct:[0],
-  })),
-};
+const examCatalog = window.EXAM_CATALOG;
+const examSets = new Map(examCatalog.flatMap(family => family.sets.map(set => [set.id,set])));
 const defaults = {sets:[], active:null, stats:{}, history:[], session:null, theme:'light'};
 let data;
 let storageAvailable = true;
@@ -46,7 +41,8 @@ try {
 }
 let page = 'home';
 let menuOpen = false;
-let bankFilter = {term:'', topic:''};
+const BANK_PAGE_SIZE = 60;
+let bankFilter = {term:'', topic:'', limit:BANK_PAGE_SIZE};
 let draft = freshDraft();
 let review = null;
 let resultId = null;
@@ -87,7 +83,7 @@ function currentSet() {
   return findSet(data.active);
 }
 function findSet(id) {
-  return id === ofl.id ? ofl : data.sets.find(set => set.id === id);
+  return examSets.get(id) || data.sets.find(set => set.id === id);
 }
 function statsFor(set) {
   return data.stats[set.id] || {};
@@ -126,23 +122,48 @@ function nav(label, name, action, value, active, count) {
     '<span>' + escapeHtml(label) + '</span>' + (count ? '<span class="nav-count">' + count + '</span>' : '') + '</button>';
 }
 
+function visibleSet() {
+  if (page === 'set' || page === 'bank') return currentSet();
+  if (page === 'quiz') return findSet(data.session?.setId);
+  if (page === 'result') return findSet(data.history.find(row => row.id === resultId)?.setId);
+}
+function waitingForSet(set) {
+  const status = set.loadFailed ? 'Otázky se nepodařilo načíst.' : 'Načítám otázky…';
+  return pageHeader(escapeHtml(set.title),'') + '<div class="panel empty" role="status"><p>' + status + '</p>' +
+    (set.loadFailed ? makeButton('Zkusit znovu','reload-set') : '') + '</div>' + sourceLinks(set);
+}
+function loadSet(set) {
+  if (!set?.load || set.questions || set.loading || set.loadFailed) return;
+  set.loading = true;
+  set.load().then(questions => {
+    if (questions?.length !== set.questionCount) throw new Error('Neúplná sada.');
+    set.questions = questions;
+  }).catch(() => {
+    set.loadFailed = true;
+  }).finally(() => {
+    set.loading = false;
+    if (visibleSet() === set) render();
+  });
+}
 function render() {
   const set = currentSet();
   const dark = data.theme === 'dark';
   document.documentElement.dataset.theme = data.theme;
-  const captions = {home:'Vytvořit kvíz',set:set?.title || 'Moje sady',bank:'Otázky',history:'Historie',review:'Návrh kvízu',quiz:'Procvičování',result:'Výsledek'};
+  const captions = {home:'Vytvořit kvíz',catalog:'Zkušební sady',set:set?.title || 'Moje sady',bank:'Otázky',history:'Historie',review:'Návrh kvízu',quiz:'Procvičování',result:'Výsledek'};
   if (page === 'quiz' && data.session?.mode === 'test') captions.quiz = 'Test';
-  const content = {home, set:setHome, bank, history, review:reviewPage, quiz, result}[page](set);
+  const visible = visibleSet();
+  const content = visible && !visible.questions ? waitingForSet(visible) :
+    {home, catalog, set:setHome, bank, history, review:reviewPage, quiz, result}[page](set);
   app.innerHTML = '<div class="shell' + (menuOpen ? ' menu-open' : '') + '">' +
     '<button class="mobile-shade" aria-label="Zavřít nabídku" data-action="menu"></button>' +
     '<aside class="sidebar" id="sidebar"><nav aria-label="Hlavní navigace">' +
     '<a href="#prehled" data-action="go" data-value="home" class="brand"><span class="brand-mark">' + icon('mark') + '</span>Kvízovna</a>' +
     '<div class="nav-group">' + nav('Vytvořit kvíz','plus','go','home',page === 'home') +
+    nav('Zkušební sady','file','go','catalog',page === 'catalog') +
     nav('Banka otázek','book','go','bank',page === 'bank') + nav('Historie','chart','go','history',page === 'history') + '</div>' +
     (data.sets.length ? '<div class="nav-group"><p class="nav-label">Moje sady</p>' +
     data.sets.map(item => nav(item.title,'file','set',item.id,page === 'set' && item.id === set?.id,item.questions.length)).join('') + '</div>' : '') +
-    '<div class="nav-group"><p class="nav-label">Připravené sady</p>' +
-    nav('Letecké rádio OFL','plane','set',ofl.id,page === 'set' && set?.id === ofl.id,ofl.questions.length) + '</div></nav>' +
+    '</nav>' +
     '<div class="sidebar-bottom">' + nav(dark ? 'Světlý režim' : 'Tmavý režim',dark ? 'sun' : 'moon','theme') + '</div></aside>' +
     '<div><header class="topbar"><div class="crumbs">' +
     '<button class="icon-button menu-button" data-action="menu" aria-label="Otevřít nabídku" aria-controls="sidebar" aria-expanded="' + menuOpen + '">' + icon('menu') + '</button>' +
@@ -157,6 +178,7 @@ function go(next) {
   menuOpen = false;
   page = next;
   render();
+  loadSet(visibleSet());
   window.scrollTo(0, 0);
   document.querySelector('#content').focus({preventScroll:true});
 }
@@ -171,31 +193,54 @@ function resumeCard(running) {
 }
 function setHome(set) {
   if (!set) return home();
-  const isOfl = set.id === 'ofl';
-  const learned = set.questions.filter(q => statsFor(set)[q.id]?.last === true).length;
+  const stats = statsFor(set);
+  const learned = set.questions.filter(q => stats[q.id]?.last === true).length;
   const toRepeat = mistakes(set).length;
   const running = data.session;
-  return '<section class="hero">' + (isOfl ? '<img class="hero-image" src="letiste.jpg" alt="" fetchpriority="high">' : '') +
-    '<div class="hero-copy"><span class="hero-tag">' + icon(isOfl ? 'plane' : 'book') +
-    (isOfl ? 'Příprava na zkoušku OFL' : countText(set.questions.length)) + '</span><h1>' +
-    (isOfl ? 'Letecká radiotelefonie' : escapeHtml(set.title)) + '</h1><p>' +
-    (isOfl ? 'Procvič si otázky ČTÚ a vyzkoušej si písemnou zkoušku nanečisto.' : 'Procvič si vlastní otázky a sleduj svůj pokrok.') +
+  return '<section class="hero">' + (set.illustration ? '<img class="hero-image" src="letiste.jpg" alt="" fetchpriority="high">' : '') +
+    '<div class="hero-copy"><span class="hero-tag">' + icon(set.illustration ? 'plane' : 'book') +
+    countText(set.questions.length) + '</span><h1>' + escapeHtml(set.heading || set.title) + '</h1><p>' +
+    escapeHtml(set.description || 'Procvič si vlastní otázky a sleduj svůj pokrok.') +
     '</p><div class="button-row">' + makeButton('Spustit test','setup-test',{name:'file',style:'primary'}) +
-    makeButton('Procvičovat','setup-drill',{name:'bolt'}) + '</div></div></section>' +
+    makeButton('Procvičovat','setup-drill',{name:'bolt'}) + makeButton('Banka otázek','go',{name:'book',value:'bank'}) + '</div></div></section>' +
+    sourceLinks(set,true) +
     (running?.setId === set.id ? resumeCard(running) : '') +
     '<div class="mode-heading">' + section('Jak chceš trénovat?') + '</div><div class="mode-grid">' +
-    modeCard('Test nanečisto',isOfl ? 'Simulace na 60 minut nebo kratší test.' : 'Namíchej si otázky. Výsledek uvidíš po odevzdání.','file','green','setup-test') +
+    modeCard('Test nanečisto',set.simulation ? 'Test na čas nebo vlastní výběr otázek.' : 'Namíchej si otázky. Výsledek uvidíš po odevzdání.','file','green','setup-test') +
     modeCard('Dril otázek','Zpětná vazba hned po každé odpovědi.','bolt','orange','setup-drill') +
     modeCard('Opakování chyb',toRepeat ? 'K zopakování · ' + countText(toRepeat) : 'Vrať se k otázkám, ve kterých chybuješ.','repeat','blue','mistakes') + '</div>' +
     '<div class="dashboard-grid"><section class="panel dash-panel">' + section('Tematické okruhy') + '<div class="topic-list">' +
-    groups(set).map(([topic, count], i) => '<button class="topic-row" data-action="topic" data-value="' + escapeHtml(topic) +
-    '"><span class="topic-key">' + (isOfl ? 'ABC'[i] : icon('book')) + '</span><span>' + escapeHtml(topic) +
+    groups(set).map(([topic, count]) => '<button class="topic-row" data-action="topic" data-value="' + escapeHtml(topic) +
+    '"><span class="topic-key">' + icon('book') + '</span><span>' + escapeHtml(topic) +
     '</span><small>' + countText(count) + '</small>' + icon('chevron') + '</button>').join('') + '</div></section>' +
     '<section class="panel dash-panel">' + section('Můj pokrok') + '<div class="progress-body">' +
     ring(percent(learned,set.questions.length)) + '<div class="progress-info"><strong>' + learned + ' z ' +
     set.questions.length + ' otázek zvládnuto</strong><p>' + (toRepeat ? 'K zopakování · ' + countText(toRepeat) : 'Podle posledních odpovědí') +
-    '</p><button class="text-button" data-action="go" data-value="history">Zobrazit historii ' + icon('next') + '</button></div></div></section></div>' +
-    (isOfl ? '<p class="source"><a href="' + source + '" target="_blank" rel="noopener">Otázky ČTÚ · verze 09/2025</a> · Chybné možnosti jsou doplněné pro trénink.</p>' : '');
+    '</p><button class="text-button" data-action="go" data-value="history">Zobrazit historii ' + icon('next') + '</button></div></div></section></div>';
+}
+function sourceLinks(set, detailed = false) {
+  if (!set?.sources?.length) return '';
+  return '<div class="exam-source' + (detailed ? ' panel' : '') + '"><span>' + icon('outward') + ' <strong>' +
+    (set.sources.length === 1 ? 'Zdroj otázek' : 'Zdroje a podklady') + '</strong></span><div class="source-links">' +
+    set.sources.map(({label,url}) => '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' +
+      escapeHtml(label) + '</a>').join('') + '</div>' +
+    (detailed && set.sourceNote ? '<p>' + escapeHtml(set.sourceNote) + '</p>' : '') + '</div>';
+}
+function questionExtras(q) {
+  return (q.context ? '<details class="case-context" open><summary>Zadání případové studie</summary><p>' +
+    escapeHtml(q.context) + '</p></details>' : '') +
+    (q.media?.length ? '<div class="question-media">' + q.media.map(({type,url}) => {
+      const src = escapeHtml(url);
+      const element = type === 'video' ? '<video src="' + src + '" controls playsinline preload="none"></video>' :
+        '<img src="' + src + '" alt="Obrazový podklad k otázce ' + escapeHtml(q.id) + '" loading="lazy">';
+      return '<figure>' + element + '<figcaption><a href="' + src +
+        '" target="_blank" rel="noopener">Otevřít ' + (type === 'video' ? 'video' : 'obrázek') + ' ze zdroje</a></figcaption></figure>';
+    }).join('') + '</div>' : '');
+}
+function answerImages(q, indices) {
+  if (!q.answerMedia) return '';
+  return indices.flatMap(i => q.answerMedia[i] || []).map(({url}) =>
+    '<img class="option-image" src="' + escapeHtml(url) + '" alt="Obrazový podklad k odpovědi" loading="lazy">').join('');
 }
 function ring(pct) {
   return '<div class="ring" style="--pct:' + pct + '%"><span>' + pct + ' %</span></div>';
@@ -212,6 +257,7 @@ function correctText(q) {
 function bank(set) {
   if (!set) return pageHeader('Banka otázek', 'Vyber sadu, kterou si chceš prohlédnout.') + library('set-bank');
   return pageHeader('Banka otázek', escapeHtml(set.title) + ' · ' + countText(set.questions.length)) +
+    sourceLinks(set) +
     '<div class="filters"><input class="search-input" id="search" type="search" aria-label="Vyhledat otázku" placeholder="Hledat podle textu nebo čísla…" value="' +
     escapeHtml(bankFilter.term) + '"><select class="search-input" id="bank-topic" aria-label="Filtrovat podle okruhu">' +
     topicOptions(set, bankFilter.topic) + '</select></div><div id="bank-list">' + bankList(set) + '</div>';
@@ -221,10 +267,14 @@ function bankList(set) {
   const matches = set.questions.filter(q => (!bankFilter.topic || q.topic === bankFilter.topic) &&
     searchable([q.id,q.text,q.topic,correctText(q)].join(' ')).includes(term));
   if (!matches.length) return '<div class="panel empty"><h3>Žádné výsledky</h3><p>Zkus jiný výraz nebo okruh.</p></div>';
+  const visible = matches.slice(0,bankFilter.limit);
   return '<p class="muted" aria-live="polite">' + countText(matches.length) + '</p><div class="bank-list">' +
-    matches.map(q => '<details class="panel bank-item"><summary><span class="tag">' + escapeHtml(q.id) +
-    '</span> ' + escapeHtml(q.text) + '</summary><p><strong>Správná odpověď</strong> · ' + escapeHtml(correctText(q)) +
-    '</p></details>').join('') + '</div>';
+    visible.map(q => '<details class="panel bank-item"><summary><span class="tag">' + escapeHtml(q.id) +
+    '</span> ' + escapeHtml(q.text) + '</summary>' + questionExtras(q) +
+    '<p><strong>Správná odpověď</strong> · ' + escapeHtml(correctText(q)) + '</p>' + answerImages(q,q.correct) +
+    (q.explanation ? '<p class="explanation">' + escapeHtml(q.explanation) + '</p>' : '') + '</details>').join('') + '</div>' +
+    (visible.length < matches.length ? '<div class="bank-more">' +
+      makeButton('Zobrazit další otázky','bank-more',{name:'plus'}) + '</div>' : '');
 }
 function history() {
   const rows = data.history;
@@ -234,21 +284,29 @@ function history() {
       return '<button class="panel history-row" data-action="result" data-value="' + escapeHtml(row.id) +
       '"><span class="tint ' + (row.mode === 'test' ? 'green' : 'orange') + '">' + icon(row.mode === 'test' ? 'file' : 'bolt') +
       '</span><span class="history-text"><strong>' + escapeHtml(row.title) + '</strong><small>' + escapeHtml(row.label) + ' · ' + date +
-      '</small></span><strong>' + percent(row.correct,row.total) + ' %</strong>' + icon('chevron') + '</button>';
+      '</small></span><strong>' + resultPercent(row,findSet(row.setId)) + ' %</strong>' + icon('chevron') + '</button>';
     }).join('') + '</div>' : '<div class="panel empty"><h3>Zatím tu nejsou žádné výsledky</h3><p>Po dokončení prvního testu nebo drilu se výsledek objeví tady.</p>' +
     makeButton('Vytvořit kvíz','go',{name:'plus',value:'home'}) + '</div>');
 }
 
 function library(action) {
-  return '<div class="library">' + [...data.sets,ofl].map(set => {
-    const builtIn = set.id === ofl.id;
-    return '<button class="panel library-card' + (builtIn ? ' library-ofl' : '') + '" data-action="' + action +
-      '" data-value="' + escapeHtml(set.id) + '">' +
-      (builtIn ? '<img src="letiste.jpg" alt="" loading="lazy">' : '') +
-      '<span class="tint green">' + icon(builtIn ? 'plane' : 'book') + '</span><span class="library-title"><strong>' +
-      escapeHtml(builtIn ? 'OFL · Letecká radiotelefonie' : set.title) + '</strong><small>' +
-      (builtIn ? 'Připravená sada ČTÚ · ' : '') + countText(set.questions.length) + '</small></span>' + icon('chevron') + '</button>';
-  }).join('') + '</div>';
+  const personal = data.sets.length ? '<div class="library">' + data.sets.map(set =>
+    '<button class="panel library-card" data-action="' + action + '" data-value="' + escapeHtml(set.id) + '">' +
+    '<span class="tint green">' + icon('book') + '</span><span class="library-title"><strong>' + escapeHtml(set.title) +
+    '</strong><small>' + countText(set.questions.length) + '</small></span>' + icon('chevron') + '</button>').join('') + '</div>' : '';
+  return personal + examLibrary(action);
+}
+function examLibrary(action) {
+  return '<div class="exam-grid">' + examCatalog.map(family =>
+    '<section class="panel exam-family"><div class="exam-family-head">' +
+    '<span class="tint ' + family.color + '">' + icon(family.icon) + '</span><div><h3>' + escapeHtml(family.title) +
+    '</h3><small>' + escapeHtml(family.authority) + '</small></div></div><div class="exam-family-sets">' +
+    family.sets.map(set => '<button type="button" class="exam-variant" data-action="' + action + '" data-value="' +
+      escapeHtml(set.id) + '"><span><strong>' + escapeHtml(set.shortTitle) + '</strong><small>' +
+      countText(set.questionCount ?? set.questions.length) + '</small></span>' + icon('chevron') + '</button>').join('') + '</div></section>').join('') + '</div>';
+}
+function catalog() {
+  return pageHeader('Zkušební sady', 'Vyber průkaz nebo odbornou zkoušku a začni procvičovat.') + examLibrary('set');
 }
 function home() {
   const notes = draft.mode === 'notes';
@@ -438,12 +496,12 @@ function openDialog(title, body) {
 }
 function setup(mode, topic = '') {
   const set = currentSet();
-  const simulation = mode === 'test' && set.id === 'ofl';
+  const simulation = mode === 'test' && set.simulation;
   activeDialog = mode;
   openDialog(mode === 'test' ? 'Nastavení testu' : 'Nastavení drilu',
     '<form id="setup-form">' + (simulation ?
-      '<label class="radio-row"><input type="radio" name="format" value="simulation" checked><span><strong>Simulace OFL</strong>' +
-      '<small>80 otázek · 60 min · alespoň 90 % v každém okruhu</small></span></label>' +
+      '<label class="radio-row"><input type="radio" name="format" value="simulation" checked><span><strong>' + escapeHtml(simulation.label) +
+      '</strong><small>' + escapeHtml(simulation.description) + '</small></span></label>' +
       '<label class="radio-row"><input type="radio" name="format" value="custom"><span><strong>Vlastní délka testu</strong>' +
       '<small>Vyber okruh a počet otázek. Test je bez časového limitu.</small></span></label>' : '') +
     '<div id="setup-custom"' + (simulation ? ' hidden' : '') +
@@ -478,7 +536,7 @@ function start(mode, set, questions, {simulation = false, label} = {}) {
   data.session = {
     id: globalThis.crypto?.randomUUID?.() || now.toString(36) + Math.random().toString(36).slice(2),
     setId:set.id, mode, index:0, label:label || (mode === 'test' ? 'Vlastní test' : 'Dril otázek'), simulation,
-    deadline: simulation ? now + 60*60*1000 : null,
+    deadline: simulation ? now + set.simulation.minutes*60*1000 : null,
     items: questions.map(q => ({id:q.id, order:shuffled(q.options.map((_,i) => i)), answer:q.options.length === 1 ? '' : [], checked:false})),
   };
   if (dialog.open) dialog.close();
@@ -530,24 +588,26 @@ function quiz() {
       return '<button type="button" class="option' + (right ? ' correct' : wrong ? ' incorrect' : '') +
         '" data-action="answer" data-value="' + option + '" aria-pressed="' + chosen +
         '"' + (checked ? ' aria-disabled="true"' : '') + '><span class="letter">' + String.fromCharCode(65+i) +
-        '</span><span>' + escapeHtml(q.options[option]) + '</span>' + (right ? icon('check') : wrong ? icon('close') : '') + '</button>';
+        '</span><span>' + escapeHtml(q.options[option]) + answerImages(q,[option]) + '</span>' +
+        (right ? icon('check') : wrong ? icon('close') : '') + '</button>';
     }).join('') + '</div>';
   return '<div class="quiz-top">' + makeButton('Zpět na sadu','go',{value:'set',style:'ghost',name:'back'}) +
     '<div class="button-row">' + timer + (test ? makeButton('Odevzdat','finish',{style:'ghost'}) : '') + '</div></div>' +
     '<div class="quiz-layout' + (test ? '' : ' drill') + '"><div><section class="panel quiz-card">' +
-    '<div class="quiz-meta"><span class="tag">' + escapeHtml(q.topic) + (set.id === 'ofl' ? ' · ' + q.id : '') +
+    '<div class="quiz-meta"><span class="tag">' + escapeHtml(q.topic) + (set.sources ? ' · ' + escapeHtml(q.id) : '') +
     '</span><small>Otázka ' + (s.index+1) + ' / ' + s.items.length + '</small></div>' +
-    '<h1 id="question" tabindex="-1">' + escapeHtml(q.text) + '</h1><p class="muted">' +
+    '<h1 id="question" tabindex="-1">' + escapeHtml(q.text) + '</h1>' + questionExtras(q) + '<p class="muted">' +
     (free ? q.text.includes('____') ? 'Doplň vynechaný údaj podle podkladů.' : 'Napiš odpověď co nejblíže zápisu v sadě.' :
       selection ? 'Označ všechny správné možnosti.' : 'Vyber jednu odpověď.') +
     '</p>' + options +
     (checked ? '<div class="feedback' + (isCorrect ? '' : ' bad') + '" role="status"><strong>' +
-    (isCorrect ? 'Správně' : 'Správná odpověď') + '</strong>' + (isCorrect ? '' : '<p>' + escapeHtml(correctText(q)) + '</p>') + '</div>' : '') +
+    (isCorrect ? 'Správně' : 'Správná odpověď') + '</strong>' + (isCorrect ? '' : '<p>' + escapeHtml(correctText(q)) + '</p>') +
+    (q.explanation ? '<p class="explanation">' + escapeHtml(q.explanation) + '</p>' : '') + '</div>' : '') +
     '<div class="quiz-actions"><div>' + (test ? makeButton('Předchozí','previous',{name:'back',disabled:s.index === 0}) : '') + '</div>' +
     makeButton(test ? s.index === s.items.length - 1 ? 'Odevzdat test' : 'Další otázka' : !checked ? 'Zkontrolovat' :
       s.index === s.items.length - 1 ? 'Zobrazit výsledek' : 'Další otázka','advance',
       {style:'primary',name:!test && !checked ? 'check' : 'next',disabled:!test && !checked && !answered(item),id:'advance'}) +
-    '</div></section>' + (!free ? '<p class="shortcuts"><kbd>A</kbd>–<kbd>' +
+    '</div></section>' + sourceLinks(set) + (!free ? '<p class="shortcuts"><kbd>A</kbd>–<kbd>' +
     String.fromCharCode(64 + q.options.length) + '</kbd> výběr · <kbd>Enter</kbd> pokračovat</p>' : '') + '</div>' +
     (test ? '<aside class="panel quiz-aside">' + quizAside(s) + '</aside>' : '') + '</div>';
 }
@@ -630,19 +690,24 @@ function finish(expired) {
   const byId = new Map(set.questions.map(q => [q.id,q]));
   const counts = new Map();
   let correct = 0;
+  let points = 0;
+  let totalPoints = 0;
   const missed = [];
   for (const item of s.items) {
     const q = byId.get(item.id);
     const right = correctAnswer(q,item);
     const topic = counts.get(q.topic) || {topic:q.topic, correct:0, total:0};
     topic.total++;
-    if (right) { correct++; topic.correct++; }
+    const value = q.points ?? 1;
+    totalPoints += value;
+    if (right) { correct++; topic.correct++; points += value; }
     counts.set(q.topic,topic);
     if (s.mode === 'test') mark(q,set,item);
-    if (!right) missed.push({id:q.id, answer:typeof item.answer === 'string' ? item.answer : item.answer.map(i => q.options[i]).join(' · ')});
+    if (!right) missed.push({id:q.id, answer:typeof item.answer === 'string' ? item.answer : item.answer.map(i => q.options[i]).join(' · '),
+      ...(q.answerMedia ? {indices:item.answer} : {})});
   }
   const entry = {id:s.id, setId:s.setId, title:set.title, mode:s.mode, label:s.label, correct, total:s.items.length,
-    byTopic:[...counts.values()], missed, expired, simulation:s.simulation, ended:Date.now()};
+    byTopic:[...counts.values()], missed, expired, simulation:s.simulation, points, totalPoints, ended:Date.now()};
   data.history.unshift(entry);
   data.history = data.history.slice(0,100);
   data.session = null;
@@ -651,28 +716,38 @@ function finish(expired) {
   save();
   go('result');
 }
+function resultPercent(entry,set) {
+  return entry.simulation && set?.simulation?.minimumPoints && entry.totalPoints ?
+    percent(entry.points,entry.totalPoints) : percent(entry.correct,entry.total);
+}
 function result() {
   const entry = data.history.find(row => row.id === resultId);
   if (!entry) return history();
   const set = findSet(entry.setId);
-  const pct = percent(entry.correct,entry.total);
-  const passed = entry.simulation && entry.byTopic.every(row => row.correct * 10 >= row.total * 9);
-  const detail = entry.correct + ' správně z ' + entry.total;
+  const pct = resultPercent(entry,set);
+  const simulation = entry.simulation && set.simulation;
+  const topicPassed = row => !simulation?.topicMinimum || row.correct * 100 >= row.total * simulation.topicMinimum;
+  const passed = simulation && (simulation.minimumPoints ? (entry.points ?? entry.correct) >= simulation.minimumPoints : entry.byTopic.every(topicPassed));
+  const detail = entry.correct + ' správně z ' + entry.total +
+    (simulation?.minimumPoints ? ' · body ' + entry.points + '/' + entry.totalPoints + ' · limit ' + simulation.minimumPoints : '');
   return '<div class="narrow"><section class="panel form-panel"><div class="result-head">' + ring(pct) +
     '<div><small>' + escapeHtml(entry.label) + ' · ' + escapeHtml(entry.title) + '</small><h1>' +
-    (entry.simulation ? passed ? 'Písemná část splněna' : 'Písemná část nesplněna' : 'Hotovo') +
+    (simulation?.topicMinimum ? (passed ? 'Písemná část splněna' : 'Písemná část nesplněna') :
+      simulation ? (passed ? 'Limit testu splněn' : 'Limit testu nesplněn') : 'Hotovo') +
     '</h1><p>' + detail + (entry.expired ? ' · čas vypršel' : '') + '</p></div></div>' +
     '<div class="result-topics">' + entry.byTopic.map(({topic, correct, total}) =>
       '<div class="result-topic"><span>' + escapeHtml(topic) + '</span><strong class="' +
-      (entry.simulation && correct * 10 < total * 9 ? 'bad-text' : 'good-text') + '">' + correct + '/' + total +
+      (topicPassed({correct,total}) ? 'good-text' : 'bad-text') + '">' + correct + '/' + total +
       ' · ' + percent(correct,total) + ' %</strong></div>').join('') + '</div><div class="button-row">' +
     (entry.missed.length ? makeButton('Procvičit chyby','retry-result',{name:'repeat',style:'primary'}) : '') +
-    makeButton('Zpět na sadu','set',{value:set.id}) + '</div></section>' +
+    makeButton('Zpět na sadu','set',{value:set.id}) + '</div></section>' + sourceLinks(set) +
     (entry.missed.length ? '<div class="details-heading">' + section('Otázky k zopakování') + '</div><div class="bank-list">' +
     entry.missed.map(row => {
       const q = set.questions.find(question => question.id === row.id);
-      return '<details class="panel bank-item"><summary>' + escapeHtml(q.text) + '</summary><p class="bad-text"><strong>Tvoje odpověď</strong> · ' +
-        escapeHtml(row.answer || 'Bez odpovědi') + '</p><p><strong>Správná odpověď</strong> · ' + escapeHtml(correctText(q)) + '</p></details>';
+      return '<details class="panel bank-item"><summary>' + escapeHtml(q.text) + '</summary>' + questionExtras(q) +
+        '<p class="bad-text"><strong>Tvoje odpověď</strong> · ' + escapeHtml(row.answer || 'Bez odpovědi') + '</p>' +
+        answerImages(q,row.indices || []) + '<p><strong>Správná odpověď</strong> · ' + escapeHtml(correctText(q)) + '</p>' +
+        answerImages(q,q.correct) + (q.explanation ? '<p class="explanation">' + escapeHtml(q.explanation) + '</p>' : '') + '</details>';
     }).join('') + '</div>' : '') + '</div>';
 }
 
@@ -684,12 +759,26 @@ document.addEventListener('click', event => {
   const set = currentSet();
   switch (button.dataset.action) {
     case 'go':
-      if (value === 'bank') bankFilter = {term:'',topic:''};
+      if (value === 'bank') bankFilter = {term:'',topic:'',limit:BANK_PAGE_SIZE};
       go(value); break;
     case 'set':
       data.active = value; save(); go('set'); break;
     case 'set-bank':
-      data.active = value; bankFilter = {term:'',topic:''}; save(); go('bank'); break;
+      data.active = value; bankFilter = {term:'',topic:'',limit:BANK_PAGE_SIZE}; save(); go('bank'); break;
+    case 'reload-set': {
+      const selected = visibleSet();
+      selected.loadFailed = false;
+      render();
+      loadSet(selected);
+      break;
+    }
+    case 'bank-more': {
+      const previous = bankFilter.limit;
+      bankFilter.limit += BANK_PAGE_SIZE;
+      document.querySelector('#bank-list').innerHTML = bankList(set);
+      document.querySelectorAll('#bank-list summary')[previous]?.focus();
+      break;
+    }
     case 'menu':
       menuOpen = !menuOpen; render();
       document.querySelector(menuOpen ? '.brand' : '.menu-button').focus(); break;
@@ -799,9 +888,10 @@ document.addEventListener('submit', event => {
     const set = currentSet();
     const simulation = new FormData(form).get('format') === 'simulation';
     if (simulation) {
-      const quota = [20,40,20];
-      const questions = Object.values(topics).flatMap((topic,i) => shuffled(set.questions.filter(q => q.topic === topic)).slice(0,quota[i]));
-      start('test',set,questions,{simulation:true,label:'Simulace OFL'});
+      const {sections,count,label} = set.simulation;
+      const questions = sections ? sections.flatMap(({topic,count}) => shuffled(set.questions.filter(q => q.topic === topic)).slice(0,count)) :
+        shuffled(set.questions).slice(0,count);
+      start('test',set,questions,{simulation:true,label});
     } else {
       const topic = form.querySelector('#setup-topic').value;
       const count = Number(form.querySelector('#setup-limit').value);
@@ -820,6 +910,7 @@ document.addEventListener('input', event => {
   }
   if (id === 'search') {
     bankFilter.term = value;
+    bankFilter.limit = BANK_PAGE_SIZE;
     document.querySelector('#bank-list').innerHTML = bankList(currentSet());
   }
   if (id === 'answer-text') {
@@ -835,6 +926,7 @@ document.addEventListener('change', async event => {
   const {id,name,value} = event.target;
   if (id === 'bank-topic') {
     bankFilter.topic = value;
+    bankFilter.limit = BANK_PAGE_SIZE;
     document.querySelector('#bank-list').innerHTML = bankList(currentSet());
   }
   if (id === 'setup-topic') updateLimits();
@@ -883,7 +975,11 @@ document.addEventListener('keydown', event => {
 });
 
 function tick() {
-  if (data.session?.deadline && Date.now() >= data.session.deadline) finish(true);
+  if (data.session?.deadline && Date.now() >= data.session.deadline) {
+    const set = findSet(data.session.setId);
+    if (set?.questions) finish(true);
+    else loadSet(set);
+  }
   else if (page === 'quiz') updateTimer();
 }
 setInterval(tick,1000);
