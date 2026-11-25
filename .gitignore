@@ -1,0 +1,5 @@
+# Konfigurace soukromého nasazení
+.openai/
+
+# Lokální soubory
+.DS_Store
