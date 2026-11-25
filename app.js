@@ -21,6 +21,7 @@ const icons = {
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   upload: '<path d="M4 16v4h16v-4M12 16V4m-5 5 5-5 5 5"/>',
+  pencil: '<path d="m13 6 5 5M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20z"/>',
 };
 function icon(name) {
   return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + icons[name] + '</svg>';
@@ -35,7 +36,7 @@ const ofl = {
     id, text, topic:topics[id[0]], options:[correct, ...wrong], correct:[0],
   })),
 };
-const defaults = {sets:[], active:'ofl', stats:{}, history:[], session:null, theme:'light'};
+const defaults = {sets:[], active:null, stats:{}, history:[], session:null, theme:'light'};
 let data;
 let storageAvailable = true;
 try {
@@ -46,7 +47,8 @@ try {
 let page = 'home';
 let menuOpen = false;
 let bankFilter = {term:'', topic:''};
-let draft = {title:'', text:''};
+let draft = freshDraft();
+let review = null;
 let resultId = null;
 let activeDialog = null;
 const demo = [
@@ -60,6 +62,18 @@ const demo = [
   '',
   'Jaká je značka pro kyslík? | O',
 ].join('\n');
+const notesDemo = [
+  '# Sluneční soustava',
+  'Merkur: planeta, která obíhá nejblíže Slunci.',
+  'Venuše: druhá planeta od Slunce s hustou atmosférou.',
+  'Jupiter: největší planeta sluneční soustavy.',
+  'Země oběhne Slunce za přibližně 365 dní.',
+  'Sklon zemské osy je asi 23,4°.',
+].join('\n');
+
+function freshDraft() {
+  return {mode:'notes',title:'',text:''};
+}
 
 function save() {
   try {
@@ -70,7 +84,7 @@ function save() {
 }
 
 function currentSet() {
-  return findSet(data.active) || ofl;
+  return findSet(data.active);
 }
 function findSet(id) {
   return id === ofl.id ? ofl : data.sets.find(set => set.id === id);
@@ -116,24 +130,24 @@ function render() {
   const set = currentSet();
   const dark = data.theme === 'dark';
   document.documentElement.dataset.theme = data.theme;
-  const captions = {home:'Přehled',bank:'Otázky',history:'Historie',import:'Nová sada',quiz:'Procvičování',result:'Výsledek'};
+  const captions = {home:'Vytvořit kvíz',set:set?.title || 'Moje sady',bank:'Otázky',history:'Historie',review:'Návrh kvízu',quiz:'Procvičování',result:'Výsledek'};
   if (page === 'quiz' && data.session?.mode === 'test') captions.quiz = 'Test';
-  const content = {home, bank, history, import:importPage, quiz, result}[page](set);
+  const content = {home, set:setHome, bank, history, review:reviewPage, quiz, result}[page](set);
   app.innerHTML = '<div class="shell' + (menuOpen ? ' menu-open' : '') + '">' +
     '<button class="mobile-shade" aria-label="Zavřít nabídku" data-action="menu"></button>' +
     '<aside class="sidebar" id="sidebar"><nav aria-label="Hlavní navigace">' +
     '<a href="#prehled" data-action="go" data-value="home" class="brand"><span class="brand-mark">' + icon('mark') + '</span>Kvízovna</a>' +
-    '<div class="nav-group">' + nav('Přehled','home','go','home',page === 'home') +
+    '<div class="nav-group">' + nav('Vytvořit kvíz','plus','go','home',page === 'home') +
     nav('Banka otázek','book','go','bank',page === 'bank') + nav('Historie','chart','go','history',page === 'history') + '</div>' +
-    '<div class="nav-group"><p class="nav-label">Moje sady</p>' +
-    [ofl, ...data.sets].map(item => nav(item.id === 'ofl' ? 'OFL · Letecké rádio' : item.title,
-      item.id === 'ofl' ? 'plane' : 'file', 'set', item.id, item.id === set.id, item.questions.length)).join('') +
-    nav('Přidat sadu','plus','go','import',page === 'import') + '</div></nav>' +
+    (data.sets.length ? '<div class="nav-group"><p class="nav-label">Moje sady</p>' +
+    data.sets.map(item => nav(item.title,'file','set',item.id,page === 'set' && item.id === set?.id,item.questions.length)).join('') + '</div>' : '') +
+    '<div class="nav-group"><p class="nav-label">Připravené sady</p>' +
+    nav('Letecké rádio OFL','plane','set',ofl.id,page === 'set' && set?.id === ofl.id,ofl.questions.length) + '</div></nav>' +
     '<div class="sidebar-bottom">' + nav(dark ? 'Světlý režim' : 'Tmavý režim',dark ? 'sun' : 'moon','theme') + '</div></aside>' +
     '<div><header class="topbar"><div class="crumbs">' +
     '<button class="icon-button menu-button" data-action="menu" aria-label="Otevřít nabídku" aria-controls="sidebar" aria-expanded="' + menuOpen + '">' + icon('menu') + '</button>' +
-    '<span class="home-crumb">Kvízovna</span><span class="crumb-arrow">' + icon('chevron') + '</span><strong>' + captions[page] + '</strong></div>' +
-    '<div class="top-actions">' + makeButton('Nová sada','go',{name:'plus',value:'import',style:'ghost'}) +
+    '<span class="home-crumb">Kvízovna</span><span class="crumb-arrow">' + icon('chevron') + '</span><strong>' + escapeHtml(captions[page]) + '</strong></div>' +
+    '<div class="top-actions">' + (page === 'home' ? '' : makeButton('Nový kvíz','go',{name:'plus',value:'home',style:'ghost'})) +
     '</div></header><main id="content" class="main" tabindex="-1">' + content +
     (!storageAvailable ? '<p class="form-note error" role="status">Prohlížeč nepovolil uložení. Změny platí do zavření stránky.</p>' : '') +
     '</main></div></div>';
@@ -150,7 +164,13 @@ function modeCard(title, description, name, color, action) {
   return '<button class="panel mode-card" data-action="' + action + '"><span class="tint ' + color + '">' +
     icon(name) + '</span><span class="corner-arrow">' + icon('outward') + '</span><h3>' + title + '</h3><p>' + description + '</p></button>';
 }
-function home(set) {
+function resumeCard(running) {
+  return '<div class="panel resume"><div><strong>' + (running.mode === 'test' ? 'Rozpracovaný test' : 'Rozpracovaný dril') +
+    '</strong><p>' + escapeHtml(findSet(running.setId)?.title) + ' · otázka ' + (running.index + 1) + ' z ' + running.items.length +
+    '</p></div>' + makeButton('Pokračovat','resume',{name:'next'}) + '</div>';
+}
+function setHome(set) {
+  if (!set) return home();
   const isOfl = set.id === 'ofl';
   const learned = set.questions.filter(q => statsFor(set)[q.id]?.last === true).length;
   const toRepeat = mistakes(set).length;
@@ -162,9 +182,7 @@ function home(set) {
     (isOfl ? 'Procvič si otázky ČTÚ a vyzkoušej si písemnou zkoušku nanečisto.' : 'Procvič si vlastní otázky a sleduj svůj pokrok.') +
     '</p><div class="button-row">' + makeButton('Spustit test','setup-test',{name:'file',style:'primary'}) +
     makeButton('Procvičovat','setup-drill',{name:'bolt'}) + '</div></div></section>' +
-    (running ? '<div class="panel resume"><div><strong>Rozpracovaná sada</strong><p>' + escapeHtml(findSet(running.setId)?.title) + ' · ' +
-    (running.mode === 'test' ? 'Test' : 'Dril') + ' · otázka ' + (running.index + 1) + ' z ' + running.items.length + '</p></div>' +
-    makeButton('Pokračovat','resume',{name:'next'}) + '</div>' : '') +
+    (running?.setId === set.id ? resumeCard(running) : '') +
     '<div class="mode-heading">' + section('Jak chceš trénovat?') + '</div><div class="mode-grid">' +
     modeCard('Test nanečisto',isOfl ? 'Simulace na 60 minut nebo kratší test.' : 'Namíchej si otázky. Výsledek uvidíš po odevzdání.','file','green','setup-test') +
     modeCard('Dril otázek','Zpětná vazba hned po každé odpovědi.','bolt','orange','setup-drill') +
@@ -192,6 +210,7 @@ function correctText(q) {
   return q.correct.map(i => q.options[i]).join(' · ');
 }
 function bank(set) {
+  if (!set) return pageHeader('Banka otázek', 'Vyber sadu, kterou si chceš prohlédnout.') + library('set-bank');
   return pageHeader('Banka otázek', escapeHtml(set.title) + ' · ' + countText(set.questions.length)) +
     '<div class="filters"><input class="search-input" id="search" type="search" aria-label="Vyhledat otázku" placeholder="Hledat podle textu nebo čísla…" value="' +
     escapeHtml(bankFilter.term) + '"><select class="search-input" id="bank-topic" aria-label="Filtrovat podle okruhu">' +
@@ -217,23 +236,63 @@ function history() {
       '</span><span class="history-text"><strong>' + escapeHtml(row.title) + '</strong><small>' + escapeHtml(row.label) + ' · ' + date +
       '</small></span><strong>' + percent(row.correct,row.total) + ' %</strong>' + icon('chevron') + '</button>';
     }).join('') + '</div>' : '<div class="panel empty"><h3>Zatím tu nejsou žádné výsledky</h3><p>Po dokončení prvního testu nebo drilu se výsledek objeví tady.</p>' +
-    makeButton('Zpět na přehled','go',{name:'back',value:'home'}) + '</div>');
+    makeButton('Vytvořit kvíz','go',{name:'plus',value:'home'}) + '</div>');
 }
 
-function importPage() {
-  return '<div class="narrow">' + pageHeader('Nová sada otázek', 'Vlož otázky s odpověďmi nebo nahraj soubor a začni procvičovat.') +
-    '<form id="import-form" class="panel form-panel"><label class="field">Název sady<input id="set-title" required maxlength="80" placeholder="Např. Zeměpis" value="' +
-    escapeHtml(draft.title) + '"></label><label class="field">Otázky<textarea id="set-input" required placeholder="Otázka | správná odpověď | chybná odpověď | chybná odpověď">' +
-    escapeHtml(draft.text) + '</textarea><small>První odpověď za svislítkem je správná. Pro více správných odpovědí použij zápis s + a −.</small></label>' +
+function library(action) {
+  return '<div class="library">' + [...data.sets,ofl].map(set => {
+    const builtIn = set.id === ofl.id;
+    return '<button class="panel library-card' + (builtIn ? ' library-ofl' : '') + '" data-action="' + action +
+      '" data-value="' + escapeHtml(set.id) + '">' +
+      (builtIn ? '<img src="letiste.jpg" alt="" loading="lazy">' : '') +
+      '<span class="tint green">' + icon(builtIn ? 'plane' : 'book') + '</span><span class="library-title"><strong>' +
+      escapeHtml(builtIn ? 'OFL · Letecká radiotelefonie' : set.title) + '</strong><small>' +
+      (builtIn ? 'Připravená sada ČTÚ · ' : '') + countText(set.questions.length) + '</small></span>' + icon('chevron') + '</button>';
+  }).join('') + '</div>';
+}
+function home() {
+  const notes = draft.mode === 'notes';
+  return '<div class="studio">' + pageHeader('Vytvoř si vlastní kvíz', 'Vlož poznámky, učební text nebo hotové otázky. Z návrhu si pak spustíš test nebo dril.') +
+    '<form id="import-form" class="panel form-panel composer"><div class="composer-tabs" role="group" aria-label="Typ vstupu">' +
+    '<button type="button" data-action="input-mode" data-value="notes" aria-pressed="' + notes + '">' + icon('pencil') + ' Z podkladů</button>' +
+    '<button type="button" data-action="input-mode" data-value="questions" aria-pressed="' + !notes + '">' + icon('file') + ' Hotové otázky</button></div>' +
+    '<label class="field composer-source">' + (notes ? 'Poznámky nebo učební text' : 'Otázky a odpovědi') +
+    '<textarea id="set-input" required placeholder="' + (notes ? 'Sem vlož text. Můžeš použít věty, odrážky nebo zápis „Pojem: definice“.' :
+      'Otázka | správná odpověď | chybná odpověď | chybná odpověď') + '">' + escapeHtml(draft.text) + '</textarea></label>' +
+    '<label class="field"><span>Název sady <span class="field-extra">volitelné</span></span><input id="set-title" maxlength="80" placeholder="Např. Sluneční soustava" value="' +
+    escapeHtml(draft.title) + '"></label>' + (notes ? '' : formatHelp()) +
+    '<div id="import-note" hidden class="form-note" role="status"></div><div class="composer-actions">' +
     '<div class="button-row"><label class="button ghost file-label" for="file-input" tabindex="0">' + icon('upload') +
-    'Nahrát TXT, CSV nebo JSON</label><input type="file" id="file-input" accept=".txt,.csv,.json,text/plain,text/csv,application/json" hidden>' +
-    makeButton('Vložit ukázku','demo') + '</div><details class="format-help"><summary>Podporované formáty a příklady</summary>' +
-    '<p>U krátkého zápisu použij jeden řádek pro každou otázku. Dvojice otázka a odpověď funguje jako otázka s volným textem. Pro zápis s + a − odděl otázky prázdným řádkem.</p><pre>' +
-    escapeHtml(demo) + '</pre><p>CSV podporuje záhlaví <code>otázka;správná;chybná1;chybná2</code> a také anglické <code>question;correct;wrong1;wrong2</code>.</p>' +
+    ' Nahrát soubor</label><input type="file" id="file-input" accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json" hidden>' +
+    '<button type="button" class="text-button" data-action="demo">Vložit ukázku</button></div>' +
+    '<button class="button primary" type="submit">' + icon('bolt') + ' Vytvořit návrh</button></div></form>' +
+    (data.session ? resumeCard(data.session) : '') + '<div class="mode-heading">' +
+    section(data.sets.length ? 'Moje a připravené sady' : 'Připravené sady') + '</div>' + library('set') + '</div>';
+}
+function formatHelp() {
+  return '<details class="format-help"><summary>Jak zapsat otázky a více správných možností</summary>' +
+    '<p>U krátkého zápisu použij jeden řádek na otázku. Za prvním svislítkem je správná odpověď. Bloky s + a − odděl prázdným řádkem.</p><pre>' +
+    escapeHtml(demo) + '</pre><p>CSV podporuje záhlaví <code>otázka;správná;chybná1;chybná2</code> nebo <code>question;correct;wrong1;wrong2</code>.</p>' +
     '<p>JSON může být pole otázek nebo objekt s názvem <code>title</code> a polem <code>questions</code>. Správné možnosti se číslují od nuly.</p>' +
-    '<pre>[{"question":"Která čísla jsou sudá?","topic":"Počty","options":["2","3","4"],"correctIndices":[0,2]}]</pre></details>' +
-    '<div id="import-note" hidden class="form-note" role="status"></div><div class="button-row">' +
-    '<button class="button primary" type="submit">' + icon('plus') + ' Vytvořit sadu</button></div></form></div>';
+    '<pre>[{"question":"Která čísla jsou sudá?","topic":"Počty","options":["2","3","4"],"correctIndices":[0,2]}]</pre></details>';
+}
+function reviewPage() {
+  if (!review) return home();
+  const count = review.questions.length;
+  return '<div class="studio">' + pageHeader('Návrh kvízu', countText(count) + ' · Před spuštěním můžeš upravit otázky i odpovědi.') +
+    '<form id="review-form"><div class="panel form-panel review-toolbar"><label class="field">Název sady<input id="review-title" required maxlength="80" value="' +
+    escapeHtml(review.title) + '"></label><div class="button-row">' + makeButton('Zpět ke vstupu','go',{value:'home',name:'back'}) +
+    '<button class="button" type="submit" name="intent" value="save"' + (count ? '' : ' disabled') + '>Uložit sadu</button>' +
+    '<button class="button" type="submit" name="intent" value="drill"' + (count ? '' : ' disabled') + '>' + icon('bolt') + ' Spustit dril</button>' +
+    '<button class="button primary" type="submit" name="intent" value="test"' + (count ? '' : ' disabled') + '>' + icon('next') +
+    ' Spustit kvíz</button></div></div></form>' +
+    (count ? '<div class="bank-list review-list">' + review.questions.map((q,i) => {
+      const format = q.options.length === 1 ? 'Volná odpověď' : q.correct.length > 1 ? 'Více správných možností' : 'Výběr odpovědi';
+      return '<article class="panel review-question"><div><small>' + (i+1) + '. · ' + format +
+        '</small><h2>' + escapeHtml(q.text) + '</h2><p>' + icon('check') + ' ' + escapeHtml(correctText(q)) + '</p></div>' +
+        '<button class="icon-button" data-action="edit-question" data-value="' + i + '" aria-label="Upravit otázku ' + (i+1) + '">' + icon('pencil') + '</button>' +
+        '<button class="icon-button" data-action="remove-question" data-value="' + i + '" aria-label="Odebrat otázku ' + (i+1) + '">' + icon('close') + '</button></article>';
+    }).join('') + '</div>' : '<div class="panel empty review-list"><h3>Sada je prázdná</h3><p>Vrať se ke vstupu a vytvoř nový návrh.</p></div>') + '</div>';
 }
 function parseCSV(raw, delimiter) {
   const rows = [];
@@ -268,6 +327,13 @@ function parseInput(raw) {
   } else if (/^(otázka|otazka|question)[;,]/i.test(text)) {
     const delimiter = text.match(/^(?:otázka|otazka|question)([;,])/i)[1];
     rows = parseCSV(text, delimiter).slice(1).map(([question,...options]) => ({question,options:options.filter(Boolean),correctIndices:[0]}));
+  } else if (/^(?:otázka|otazka|question|q):\s+/i.test(text)) {
+    const entries = text.split(/\n(?=(?:otázka|otazka|question|q):\s+)/i);
+    rows = entries.map((entry,i) => {
+      const pair = entry.match(/^(?:otázka|otazka|question|q):\s+(.*?)\n\s*(?:odpověď|odpoved|answer|a):\s+([\s\S]+)$/i);
+      if (!pair) throw new Error('Doplň řádek „Odpověď:“ u otázky ' + (i+1) + '.');
+      return {question:pair[1],options:[pair[2].trim()],correctIndices:[0]};
+    });
   } else {
     rows = text.split(/\n[ \t]*\n+/).flatMap(block => {
       const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
@@ -284,20 +350,73 @@ function parseInput(raw) {
   }
   if (!rows.length) throw new Error('V importu chybí otázky.');
   if (rows.length > 1000) throw new Error('Jedna sada může mít nejvýše 1 000 otázek.');
-  return {title, questions:rows.map((item,i) => {
-    const q = item?.question ?? item?.text;
-    const options = item?.options ?? (typeof item?.answer === 'string' ? [item.answer] : null);
-    const correct = item?.correctIndices ?? (typeof item?.answer === 'string' && !item?.options ? [0] : null);
-    const valid = value => typeof value === 'string' && value.trim() && value.length <= 3000;
-    if (!valid(q) || !Array.isArray(options) || !options.length || options.length > 12 ||
-      !options.every(valid) || new Set(options.map(answerToken)).size !== options.length ||
-      !Array.isArray(correct) || !correct.length || new Set(correct).size !== correct.length ||
-      !correct.every(index => Number.isInteger(index) && index >= 0 && index < options.length)) {
-      throw new Error('Otázka ' + (i + 1) + ' potřebuje text, 1–12 různých odpovědí a označení správné odpovědi.');
-    }
-    return {id:String(i+1),text:q.trim(),topic:typeof item.topic === 'string' ? item.topic.trim().slice(0,100) || 'Obecné' : 'Obecné',
-      options:options.map(o => o.trim()),correct};
-  })};
+  return {title, questions:rows.map((item,i) => normalizeQuestion(item,i))};
+}
+function normalizeQuestion(item,i) {
+  const q = item?.question ?? item?.text;
+  const options = item?.options ?? (typeof item?.answer === 'string' ? [item.answer] : null);
+  const correct = item?.correctIndices ?? (typeof item?.answer === 'string' && !item?.options ? [0] : null);
+  const valid = value => typeof value === 'string' && value.trim() && value.length <= 3000;
+  if (!valid(q) || !Array.isArray(options) || !options.length || options.length > 12 ||
+    !options.every(value => valid(value) && answerToken(value)) || new Set(options.map(answerToken)).size !== options.length ||
+    !Array.isArray(correct) || !correct.length || new Set(correct).size !== correct.length ||
+    !correct.every(index => Number.isInteger(index) && index >= 0 && index < options.length)) {
+    throw new Error('Otázka ' + (i + 1) + ' potřebuje text, 1–12 různých odpovědí a označení správné odpovědi.');
+  }
+  return {id:String(i+1),text:q.trim(),topic:typeof item.topic === 'string' ? item.topic.trim().slice(0,100) || 'Obecné' : 'Obecné',
+    options:options.map(o => o.trim()),correct};
+}
+function looksLikeQuestions(raw) {
+  const text = raw.trim();
+  return /^(?:\[\s*\{|\{\s*"|(?:otázka|otazka|question)[;,]|(?:otázka|otazka|question|q):\s+)/i.test(text) ||
+    /\n\+\s+\S/.test(text) && /\n[-−]\s+\S/.test(text) ||
+    text.split(/\n/).filter(line => line.trim()).every(line => /^[^|]+\|[^|]+/.test(line));
+}
+function proposeQuiz() {
+  const text = draft.text.trim();
+  const structured = draft.mode === 'questions' || looksLikeQuestions(text);
+  let proposal;
+  if (structured) proposal = parseInput(text);
+  else {
+    if (text.length > 80_000) throw new Error('Podklady mohou mít nejvýše 80 000 znaků.');
+    const questions = window.generateQuizQuestions(text);
+    if (!questions.length) throw new Error('Z podkladů se nepodařilo vytvořit otázku. Vlož věty s fakty, dvojice „Pojem: definice“ nebo hotové otázky s odpovědí.');
+    proposal = {questions, title:text.match(/^#{1,6}\s+(.+)$/m)?.[1]};
+  }
+  const title = draft.title.trim() || (typeof proposal.title === 'string' ? proposal.title.trim().slice(0,80) : '') || 'Vlastní kvíz';
+  review = {title,questions:proposal.questions};
+  go('review');
+}
+function answerEditor(value = '', checked = false) {
+  return '<div class="answer-editor"><label class="field"><span>Možnost</span><textarea name="option" rows="2" required maxlength="3000">' +
+    escapeHtml(value) + '</textarea></label><label class="correct-editor"><input type="checkbox"' +
+    (checked ? ' checked' : '') + '> Správně</label><button type="button" class="icon-button" data-action="remove-option" aria-label="Odebrat možnost">' +
+    icon('close') + '</button></div>';
+}
+function editQuestion(index) {
+  const q = review.questions[index];
+  openDialog('Upravit otázku', '<form id="edit-question" data-index="' + index + '"><label class="field">Znění otázky' +
+    '<textarea name="question" rows="3" required maxlength="3000">' + escapeHtml(q.text) + '</textarea></label>' +
+    '<div id="answer-editors">' + q.options.map((option,i) => answerEditor(option,q.correct.includes(i))).join('') + '</div>' +
+    '<button type="button" class="text-button" data-action="add-option">' + icon('plus') + ' Přidat možnost</button>' +
+    '<p id="edit-error" class="form-note error" hidden role="status"></p><div class="button-row">' +
+    makeButton('Zrušit','dismiss') + '<button class="button primary" type="submit">Uložit změnu</button></div></form>');
+}
+function saveReview(intent) {
+  const title = review.title.trim();
+  if (!title || !review.questions.length) return;
+  const id = 'set-' + (globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const set = {id,title,questions:review.questions};
+  data.sets.push(set);
+  data.active = id;
+  draft = freshDraft();
+  review = null;
+  save();
+  if (intent === 'save') { go('set'); return; }
+  if (!data.session) { start(intent,set,shuffled(set.questions)); return; }
+  go('set');
+  openDialog('Začít novou sérii?', '<p class="muted">Sada je uložená. Spuštěním nové série nahradíš rozpracovanou.</p>' +
+    '<div class="button-row">' + makeButton('Zrušit','dismiss') + makeButton('Začít','start-saved',{value:intent,style:'primary'}) + '</div>');
 }
 function importNote(message, error = false) {
   const note = document.querySelector('#import-note');
@@ -413,13 +532,14 @@ function quiz() {
         '"' + (checked ? ' aria-disabled="true"' : '') + '><span class="letter">' + String.fromCharCode(65+i) +
         '</span><span>' + escapeHtml(q.options[option]) + '</span>' + (right ? icon('check') : wrong ? icon('close') : '') + '</button>';
     }).join('') + '</div>';
-  return '<div class="quiz-top">' + makeButton('Přehled','go',{value:'home',style:'ghost',name:'back'}) +
+  return '<div class="quiz-top">' + makeButton('Zpět na sadu','go',{value:'set',style:'ghost',name:'back'}) +
     '<div class="button-row">' + timer + (test ? makeButton('Odevzdat','finish',{style:'ghost'}) : '') + '</div></div>' +
     '<div class="quiz-layout' + (test ? '' : ' drill') + '"><div><section class="panel quiz-card">' +
     '<div class="quiz-meta"><span class="tag">' + escapeHtml(q.topic) + (set.id === 'ofl' ? ' · ' + q.id : '') +
     '</span><small>Otázka ' + (s.index+1) + ' / ' + s.items.length + '</small></div>' +
     '<h1 id="question" tabindex="-1">' + escapeHtml(q.text) + '</h1><p class="muted">' +
-    (free ? 'Napiš odpověď vlastními slovy co nejblíže zápisu v sadě.' : selection ? 'Označ všechny správné možnosti.' : 'Vyber jednu odpověď.') +
+    (free ? q.text.includes('____') ? 'Doplň vynechaný údaj podle podkladů.' : 'Napiš odpověď co nejblíže zápisu v sadě.' :
+      selection ? 'Označ všechny správné možnosti.' : 'Vyber jednu odpověď.') +
     '</p>' + options +
     (checked ? '<div class="feedback' + (isCorrect ? '' : ' bad') + '" role="status"><strong>' +
     (isCorrect ? 'Správně' : 'Správná odpověď') + '</strong>' + (isCorrect ? '' : '<p>' + escapeHtml(correctText(q)) + '</p>') + '</div>' : '') +
@@ -547,7 +667,7 @@ function result() {
       (entry.simulation && correct * 10 < total * 9 ? 'bad-text' : 'good-text') + '">' + correct + '/' + total +
       ' · ' + percent(correct,total) + ' %</strong></div>').join('') + '</div><div class="button-row">' +
     (entry.missed.length ? makeButton('Procvičit chyby','retry-result',{name:'repeat',style:'primary'}) : '') +
-    makeButton('Přejít na přehled','go',{value:'home'}) + '</div></section>' +
+    makeButton('Zpět na sadu','set',{value:set.id}) + '</div></section>' +
     (entry.missed.length ? '<div class="details-heading">' + section('Otázky k zopakování') + '</div><div class="bank-list">' +
     entry.missed.map(row => {
       const q = set.questions.find(question => question.id === row.id);
@@ -567,7 +687,9 @@ document.addEventListener('click', event => {
       if (value === 'bank') bankFilter = {term:'',topic:''};
       go(value); break;
     case 'set':
-      data.active = value; save(); go('home'); break;
+      data.active = value; save(); go('set'); break;
+    case 'set-bank':
+      data.active = value; bankFilter = {term:'',topic:''}; save(); go('bank'); break;
     case 'menu':
       menuOpen = !menuOpen; render();
       document.querySelector(menuOpen ? '.brand' : '.menu-button').focus(); break;
@@ -588,9 +710,39 @@ document.addEventListener('click', event => {
     }
     case 'resume':
       data.active = data.session.setId; save(); go('quiz'); break;
+    case 'input-mode':
+      draft.mode = value; render();
+      document.querySelector('[data-action="input-mode"][data-value="' + value + '"]').focus(); break;
     case 'demo':
-      draft = {title:draft.title || 'Ukázková sada',text:demo}; render();
+      draft.text = draft.mode === 'notes' ? notesDemo : demo;
+      if (!draft.title && draft.mode === 'questions') draft.title = 'Ukázková sada';
+      render();
       document.querySelector('#set-input').focus(); break;
+    case 'edit-question': editQuestion(Number(value)); break;
+    case 'remove-question': {
+      const index = Number(value);
+      review.questions.splice(index,1);
+      render();
+      (document.querySelector('[data-action="remove-question"][data-value="' + index + '"]') ||
+        document.querySelector('#review-title')).focus({preventScroll:true});
+      break;
+    }
+    case 'add-option': {
+      const editors = document.querySelector('#answer-editors');
+      if (editors.children.length >= 12) break;
+      editors.insertAdjacentHTML('beforeend',answerEditor());
+      editors.lastElementChild.querySelector('textarea').focus();
+      break;
+    }
+    case 'remove-option': {
+      const editor = button.closest('.answer-editor');
+      if (editor.parentElement.children.length <= 1) break;
+      const focus = (editor.nextElementSibling || editor.previousElementSibling).querySelector('textarea');
+      editor.remove();
+      focus.focus();
+      break;
+    }
+    case 'start-saved': start(value,set,shuffled(set.questions)); break;
     case 'dismiss': dialog.close(); break;
     case 'answer': selectAnswer(Number(value)); break;
     case 'advance': advance(); break;
@@ -612,17 +764,35 @@ document.addEventListener('submit', event => {
   const form = event.target;
   if (form.id === 'import-form') {
     event.preventDefault();
+    try { proposeQuiz(); } catch (error) { importNote(error.message,true); }
+  }
+  if (form.id === 'review-form') {
+    event.preventDefault();
+    if (!review.title.trim()) {
+      const field = form.querySelector('#review-title');
+      field.setCustomValidity('Zadej název sady.');
+      field.reportValidity();
+      return;
+    }
+    saveReview(event.submitter?.value || 'test');
+  }
+  if (form.id === 'edit-question') {
+    event.preventDefault();
+    const i = Number(form.dataset.index);
+    const old = review.questions[i];
+    const rows = [...form.querySelectorAll('.answer-editor')];
     try {
-      const imported = parseInput(draft.text);
-      const title = draft.title.trim() || (typeof imported.title === 'string' ? imported.title.trim().slice(0,80) : '');
-      if (!title) throw new Error('Zadej název sady.');
-      const id = 'set-' + (globalThis.crypto?.randomUUID?.() || Date.now().toString(36));
-      data.sets.push({id,title,questions:imported.questions});
-      data.active = id;
-      draft = {title:'',text:''};
-      save();
-      go('home');
-    } catch (error) { importNote(error.message,true); }
+      review.questions[i] = {...normalizeQuestion({text:new FormData(form).get('question'),topic:old.topic,
+        options:rows.map(row => row.querySelector('textarea').value),
+        correctIndices:rows.flatMap((row,index) => row.querySelector('input').checked ? [index] : [])},i),id:old.id};
+      dialog.close();
+      render();
+      document.querySelector('[data-action="edit-question"][data-value="' + i + '"]').focus({preventScroll:true});
+    } catch (error) {
+      const hint = form.querySelector('#edit-error');
+      hint.hidden = false;
+      hint.textContent = error.message;
+    }
   }
   if (form.id === 'setup-form') {
     event.preventDefault();
@@ -644,6 +814,10 @@ document.addEventListener('input', event => {
   const {id,value} = event.target;
   if (id === 'set-title') draft.title = value;
   if (id === 'set-input') draft.text = value;
+  if (id === 'review-title') {
+    review.title = value;
+    event.target.setCustomValidity('');
+  }
   if (id === 'search') {
     bankFilter.term = value;
     document.querySelector('#bank-list').innerHTML = bankList(currentSet());
@@ -674,14 +848,17 @@ document.addEventListener('change', async event => {
     }
     try {
       const content = await file.text();
-      if (page !== 'import') return;
-      const parsed = parseInput(content);
-      draft.text = content;
-      draft.title ||= (typeof parsed.title === 'string' && parsed.title.trim() || file.name.replace(/\.[^.]+$/,'')).slice(0,80);
+      if (page !== 'home' || !event.target.isConnected) return;
+      const structured = /\.(csv|json)$/i.test(file.name) || looksLikeQuestions(content);
+      const parsed = structured ? parseInput(content) : null;
+      if (!content.trim()) throw new Error('Soubor je prázdný.');
+      if (!structured && content.length > 80_000) throw new Error('Podklady mohou mít nejvýše 80 000 znaků.');
+      const title = typeof parsed?.title === 'string' && parsed.title.trim() || file.name.replace(/\.[^.]+$/,'');
+      draft = {mode:structured ? 'questions' : 'notes',text:content,title:draft.title || title.slice(0,80)};
       render();
-      importNote('Načteno · ' + countText(parsed.questions.length) + '.');
+      importNote(parsed ? 'Načteno · ' + countText(parsed.questions.length) + '.' : 'Podklady načteny.');
     } catch (error) {
-      if (page === 'import') importNote(error.message,true);
+      if (page === 'home' && event.target.isConnected) importNote(error.message,true);
     }
   }
 });
