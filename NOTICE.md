@@ -10,5 +10,5 @@ Licence MIT v tomto repozitáři se vztahuje na vlastní kód, dokumentaci a dop
 
 ## Ostatní podklady
 
-- **Ilustrace.** Obrázek `dist/letiste.jpg` byl vytvořen v ImageGen pro tuto aplikaci.
+- **Ilustrace katalogu.** Obrázky `dist/letiste.jpg` a `dist/covers/*.jpg` byly vytvořeny v ImageGen pro tuto aplikaci.
 - **Písma.** DM Sans a Manrope se načítají z [Google Fonts](https://fonts.google.com/). Pokud jsou nedostupná, aplikace používá systémové písmo.

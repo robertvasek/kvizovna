@@ -27,6 +27,11 @@ window.EXAM_CATALOG = (() => {
     B:'Radiokomunikační provoz',
     C:'Elektrotechnika a radiotechnika',
   };
+  function withPhoneticLetters(question) {
+    const group = question.text.match(/^Jaká jsou (?:mezinárodní )?hláskovací slova pro ([A-Z, a]+)(?: \(|\?)/u);
+    return group ? {...question,letters:group[1].match(/[A-Z]/g)} : question;
+  }
+  const vfl = bundle('vfl');
   const aviation = ['OFL','VFL'].map(label => {
     const id = label.toLowerCase();
     return {
@@ -36,12 +41,11 @@ window.EXAM_CATALOG = (() => {
       heading:label + ' · Letecká radiotelefonie',
       description:label === 'OFL' ? 'Omezený průkaz radiotelefonisty letecké pohyblivé služby.' :
         'Všeobecný průkaz radiotelefonisty letecké pohyblivé služby včetně anglické frazeologie.',
-      illustration:true,
       sources:[{label:'ČTÚ · oficiální otázky ' + label + ' (09/2025)',url:ctu + '2025_09_' + label + '_otazky.pdf'}],
       sourceNote:'Otázky a správné odpovědi vycházejí z banky ČTÚ. Chybné možnosti jsou doplněné pro trénink.',
       ...(id === 'ofl' ? {questions:window.OFL_ROWS.map(([id,text,correct,...wrong]) => ({
         id,text,topic:airTopics[id[0]],options:[correct,...wrong],correct:[0],
-      }))} : bundle('vfl')),
+      })).map(withPhoneticLetters)} : {...vfl,load:() => vfl.load().then(rows => rows.map(withPhoneticLetters))}),
       simulation:{
         label:'Simulace ' + label,
         description:'80 otázek · 60 min · alespoň 90 % v každém okruhu',
@@ -127,9 +131,9 @@ window.EXAM_CATALOG = (() => {
     sourceNote:'Znění otázek, řešení a dostupná odůvodnění pocházejí z exportu ČNB. Jednotlivé úlohy z případových studií mají připojené společné zadání.',
   }));
   return [
-    {title:'Letecká radiotelefonie',authority:'Český telekomunikační úřad',icon:'plane',color:'green',sets:aviation},
-    {title:'Vůdce malého plavidla',authority:'Státní plavební správa',icon:'book',color:'blue',sets:navigation},
-    {title:'Autoškola',authority:'Ministerstvo dopravy',icon:'file',color:'orange',sets:drivers},
-    {title:'Finanční distribuce',authority:'Česká národní banka',icon:'chart',color:'green',sets:finance},
-  ];
+    {key:'aviation',title:'Letecká radiotelefonie',authority:'Český telekomunikační úřad',icon:'plane',cover:'letiste.jpg',sets:aviation},
+    {key:'boats',title:'Vůdce malého plavidla',authority:'Státní plavební správa',icon:'book',cover:'covers/plavba.jpg',sets:navigation},
+    {key:'drivers',title:'Autoškola',authority:'Ministerstvo dopravy',icon:'file',cover:'covers/autoskola.jpg',sets:drivers},
+    {key:'finance',title:'Finanční distribuce',authority:'Česká národní banka',icon:'chart',cover:'covers/finance.jpg',sets:finance},
+  ].map(family => ({...family,sets:family.sets.map(set => ({...set,cover:family.cover,icon:family.icon}))}));
 })();

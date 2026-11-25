@@ -22,6 +22,7 @@ const icons = {
   check: '<path d="m5 12 4 4L19 6"/>',
   upload: '<path d="M4 16v4h16v-4M12 16V4m-5 5 5-5 5 5"/>',
   pencil: '<path d="m13 6 5 5M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20z"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/>',
 };
 function icon(name) {
   return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + icons[name] + '</svg>';
@@ -42,7 +43,7 @@ try {
 let page = 'home';
 let menuOpen = false;
 const BANK_PAGE_SIZE = 60;
-let bankFilter = {term:'', topic:'', limit:BANK_PAGE_SIZE};
+let bankFilter = newBankFilter();
 let draft = freshDraft();
 let review = null;
 let resultId = null;
@@ -81,6 +82,12 @@ function save() {
 
 function currentSet() {
   return findSet(data.active);
+}
+function newBankFilter(mediaOnly = false) {
+  return {term:'',topic:'',limit:BANK_PAGE_SIZE,mediaOnly};
+}
+function hasMedia(question) {
+  return Boolean(question.media?.length || question.answerMedia?.some(media => media.length));
 }
 function findSet(id) {
   return examSets.get(id) || data.sets.find(set => set.id === id);
@@ -197,12 +204,14 @@ function setHome(set) {
   const learned = set.questions.filter(q => stats[q.id]?.last === true).length;
   const toRepeat = mistakes(set).length;
   const running = data.session;
-  return '<section class="hero">' + (set.illustration ? '<img class="hero-image" src="letiste.jpg" alt="" fetchpriority="high">' : '') +
-    '<div class="hero-copy"><span class="hero-tag">' + icon(set.illustration ? 'plane' : 'book') +
+  return '<section class="hero">' + (set.cover ? '<img class="hero-image" src="' + escapeHtml(set.cover) + '" alt="" fetchpriority="high">' : '') +
+    '<div class="hero-copy"><span class="hero-tag">' + icon(set.icon || 'book') +
     countText(set.questions.length) + '</span><h1>' + escapeHtml(set.heading || set.title) + '</h1><p>' +
     escapeHtml(set.description || 'Procvič si vlastní otázky a sleduj svůj pokrok.') +
     '</p><div class="button-row">' + makeButton('Spustit test','setup-test',{name:'file',style:'primary'}) +
-    makeButton('Procvičovat','setup-drill',{name:'bolt'}) + makeButton('Banka otázek','go',{name:'book',value:'bank'}) + '</div></div></section>' +
+    makeButton('Procvičovat','setup-drill',{name:'bolt'}) + makeButton('Banka otázek','go',{name:'book',value:'bank'}) + '</div>' +
+    (set.questions.some(hasMedia) ? '<button type="button" class="text-button media-link" data-action="bank-media">' +
+      icon('image') + ' Otázky s obrázky nebo videi ' + icon('next') + '</button>' : '') + '</div></section>' +
     sourceLinks(set,true) +
     (running?.setId === set.id ? resumeCard(running) : '') +
     '<div class="mode-heading">' + section('Jak chceš trénovat?') + '</div><div class="mode-grid">' +
@@ -242,6 +251,13 @@ function answerImages(q, indices) {
   return indices.flatMap(i => q.answerMedia[i] || []).map(({url}) =>
     '<img class="option-image" src="' + escapeHtml(url) + '" alt="Obrazový podklad k odpovědi" loading="lazy">').join('');
 }
+function formatAnswer(q, option) {
+  const answer = q.options[option];
+  if (!q.letters) return escapeHtml(answer) + answerImages(q,[option]);
+  const values = answer.split(' · ');
+  return '<span class="phonetic-list">' + q.letters.map((letter,index) =>
+    '<span class="phonetic-cell"><strong>' + letter + '</strong><span>' + escapeHtml(values[index]) + '</span></span>').join('') + '</span>';
+}
 function ring(pct) {
   return '<div class="ring" style="--pct:' + pct + '%"><span>' + pct + ' %</span></div>';
 }
@@ -254,24 +270,36 @@ function searchable(s) {
 function correctText(q) {
   return q.correct.map(i => q.options[i]).join(' · ');
 }
+function bankAnswer(q) {
+  if (q.answerMedia?.some(media => media.length)) {
+    return '<ul class="bank-answer-options">' + q.options.map((_,index) =>
+      '<li><strong>' + String.fromCharCode(65+index) + (q.correct.includes(index) ? ' · Správná odpověď' : '') +
+      '</strong><span>' + formatAnswer(q,index) + '</span></li>').join('') + '</ul>';
+  }
+  return '<p><strong>Správná odpověď</strong> · ' + escapeHtml(correctText(q)) + '</p>';
+}
 function bank(set) {
   if (!set) return pageHeader('Banka otázek', 'Vyber sadu, kterou si chceš prohlédnout.') + library('set-bank');
   return pageHeader('Banka otázek', escapeHtml(set.title) + ' · ' + countText(set.questions.length)) +
     sourceLinks(set) +
     '<div class="filters"><input class="search-input" id="search" type="search" aria-label="Vyhledat otázku" placeholder="Hledat podle textu nebo čísla…" value="' +
     escapeHtml(bankFilter.term) + '"><select class="search-input" id="bank-topic" aria-label="Filtrovat podle okruhu">' +
-    topicOptions(set, bankFilter.topic) + '</select></div><div id="bank-list">' + bankList(set) + '</div>';
+    topicOptions(set, bankFilter.topic) + '</select></div>' +
+    (set.questions.some(hasMedia) ? '<label class="media-filter"><input id="bank-media" type="checkbox"' +
+      (bankFilter.mediaOnly ? ' checked' : '') + '> ' + icon('image') + ' Jen otázky s obrázky nebo videi</label>' : '') +
+    '<div id="bank-list">' + bankList(set) + '</div>';
 }
 function bankList(set) {
   const term = searchable(bankFilter.term.trim());
-  const matches = set.questions.filter(q => (!bankFilter.topic || q.topic === bankFilter.topic) &&
+  const matches = set.questions.filter(q => (!bankFilter.mediaOnly || hasMedia(q)) && (!bankFilter.topic || q.topic === bankFilter.topic) &&
     searchable([q.id,q.text,q.topic,correctText(q)].join(' ')).includes(term));
   if (!matches.length) return '<div class="panel empty"><h3>Žádné výsledky</h3><p>Zkus jiný výraz nebo okruh.</p></div>';
   const visible = matches.slice(0,bankFilter.limit);
   return '<p class="muted" aria-live="polite">' + countText(matches.length) + '</p><div class="bank-list">' +
     visible.map(q => '<details class="panel bank-item"><summary><span class="tag">' + escapeHtml(q.id) +
-    '</span> ' + escapeHtml(q.text) + '</summary>' + questionExtras(q) +
-    '<p><strong>Správná odpověď</strong> · ' + escapeHtml(correctText(q)) + '</p>' + answerImages(q,q.correct) +
+    '</span> ' + escapeHtml(q.text) +
+    (hasMedia(q) ? ' <span class="media-badge">' + icon('image') + (q.media?.some(m => m.type === 'video') ? ' Video' : ' Obrázek') + '</span>' : '') +
+    '</summary>' + questionExtras(q) + bankAnswer(q) +
     (q.explanation ? '<p class="explanation">' + escapeHtml(q.explanation) + '</p>' : '') + '</details>').join('') + '</div>' +
     (visible.length < matches.length ? '<div class="bank-more">' +
       makeButton('Zobrazit další otázky','bank-more',{name:'plus'}) + '</div>' : '');
@@ -298,12 +326,12 @@ function library(action) {
 }
 function examLibrary(action) {
   return '<div class="exam-grid">' + examCatalog.map(family =>
-    '<section class="panel exam-family"><div class="exam-family-head">' +
-    '<span class="tint ' + family.color + '">' + icon(family.icon) + '</span><div><h3>' + escapeHtml(family.title) +
-    '</h3><small>' + escapeHtml(family.authority) + '</small></div></div><div class="exam-family-sets">' +
+    '<section class="panel exam-family exam-family--' + family.key + '"><div class="exam-cover"><img src="' +
+    escapeHtml(family.cover) + '" alt="" loading="lazy" decoding="async"></div><div class="exam-family-head"><h3>' + escapeHtml(family.title) +
+    '</h3><small>' + escapeHtml(family.authority) + '</small></div><div class="exam-family-sets">' +
     family.sets.map(set => '<button type="button" class="exam-variant" data-action="' + action + '" data-value="' +
       escapeHtml(set.id) + '"><span><strong>' + escapeHtml(set.shortTitle) + '</strong><small>' +
-      countText(set.questionCount ?? set.questions.length) + '</small></span>' + icon('chevron') + '</button>').join('') + '</div></section>').join('') + '</div>';
+      countText(set.questionCount ?? set.questions.length) + '</small></span></button>').join('') + '</div></section>').join('') + '</div>';
 }
 function catalog() {
   return pageHeader('Zkušební sady', 'Vyber průkaz nebo odbornou zkoušku a začni procvičovat.') + examLibrary('set');
@@ -588,7 +616,7 @@ function quiz() {
       return '<button type="button" class="option' + (right ? ' correct' : wrong ? ' incorrect' : '') +
         '" data-action="answer" data-value="' + option + '" aria-pressed="' + chosen +
         '"' + (checked ? ' aria-disabled="true"' : '') + '><span class="letter">' + String.fromCharCode(65+i) +
-        '</span><span>' + escapeHtml(q.options[option]) + answerImages(q,[option]) + '</span>' +
+        '</span><span class="option-content">' + formatAnswer(q,option) + '</span>' +
         (right ? icon('check') : wrong ? icon('close') : '') + '</button>';
     }).join('') + '</div>';
   return '<div class="quiz-top">' + makeButton('Zpět na sadu','go',{value:'set',style:'ghost',name:'back'}) +
@@ -759,12 +787,14 @@ document.addEventListener('click', event => {
   const set = currentSet();
   switch (button.dataset.action) {
     case 'go':
-      if (value === 'bank') bankFilter = {term:'',topic:'',limit:BANK_PAGE_SIZE};
+      if (value === 'bank') bankFilter = newBankFilter();
       go(value); break;
     case 'set':
       data.active = value; save(); go('set'); break;
     case 'set-bank':
-      data.active = value; bankFilter = {term:'',topic:'',limit:BANK_PAGE_SIZE}; save(); go('bank'); break;
+      data.active = value; bankFilter = newBankFilter(); save(); go('bank'); break;
+    case 'bank-media':
+      bankFilter = newBankFilter(true); go('bank'); break;
     case 'reload-set': {
       const selected = visibleSet();
       selected.loadFailed = false;
@@ -924,8 +954,9 @@ document.addEventListener('input', event => {
 });
 document.addEventListener('change', async event => {
   const {id,name,value} = event.target;
-  if (id === 'bank-topic') {
-    bankFilter.topic = value;
+  if (id === 'bank-topic' || id === 'bank-media') {
+    if (id === 'bank-topic') bankFilter.topic = value;
+    else bankFilter.mediaOnly = event.target.checked;
     bankFilter.limit = BANK_PAGE_SIZE;
     document.querySelector('#bank-list').innerHTML = bankList(currentSet());
   }

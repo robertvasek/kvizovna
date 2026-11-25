@@ -49,7 +49,7 @@ Za prvním svislítkem je správná odpověď. Pokud je odpověď jen jedna, apl
 - **Autoškola** – elektronický věstník a ověřený výběr z cvičných eTestů pro A, B, B+E, C, C+E, D a D+E. Testy jednotlivých skupin používají 25 otázek, 30 minut a oficiální bodové hodnoty.
 - **Spotřebitelské úvěry a pojištění** – samostatné banky ČNB, včetně vícevýběru, případových studií a dostupných odůvodnění.
 
-Zdroj je uvedený u každé připravené sady i v její bance otázek. Obrazové podklady autoškoly a VMP se načítají z webů vydavatelů.
+Zdroj je uvedený u každé připravené sady i v její bance otázek. Obrazové podklady autoškoly a VMP se načítají z webů vydavatelů. V bance je najdeš přes filtr **Jen otázky s obrázky nebo videi**.
 
 ## Zdroje a licence
 
