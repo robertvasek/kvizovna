@@ -42,10 +42,15 @@ Které hodnoty jsou prvočísla?
 
 Za prvním svislítkem je správná odpověď. Pokud je odpověď jen jedna, aplikace zobrazí textové pole. V bloku možností označ správné pomocí `+` a chybné pomocí `-`. Více správných možností se hodnotí jako celek. V aplikaci najdeš i příklady CSV a JSON.
 
-## Připravená sada OFL
+## Připravené zkušební sady
 
-Součástí aplikace je sada 149 otázek k omezenému průkazu radiotelefonisty letecké pohyblivé služby. Simulace vybírá 20 otázek z předpisů, 40 z provozu a 20 z elektrotechniky a radiotechniky. Na vypracování je 60 minut a hranice úspěchu je 90 % v každém okruhu.
+- **OFL a VFL** – písemná zkouška radiotelefonisty. Simulace vybírá 20 otázek z předpisů, 40 z provozu a 20 z elektrotechniky a radiotechniky. Limit je 60 minut a 90 % v každém okruhu.
+- **VMP** – motorová plavidla M/M20, plachetnice S/S20 a pobřežní plavba v oblasti C. Každá část má vlastní otázky a trénink s časovým a bodovým limitem.
+- **Autoškola** – elektronický věstník a ověřený výběr z cvičných eTestů pro A, B, B+E, C, C+E, D a D+E. Testy jednotlivých skupin používají 25 otázek, 30 minut a oficiální bodové hodnoty.
+- **Spotřebitelské úvěry a pojištění** – samostatné banky ČNB, včetně vícevýběru, případových studií a dostupných odůvodnění.
+
+Zdroj je uvedený u každé připravené sady i v její bance otázek. Obrazové podklady autoškoly a VMP se načítají z webů vydavatelů.
 
 ## Zdroje a licence
 
-Kód aplikace je pod [licencí MIT](LICENSE). Podrobnosti k otázkám OFL, ilustraci a písmům jsou v souboru [NOTICE.md](NOTICE.md).
+Kód aplikace je pod [licencí MIT](LICENSE). Podrobnosti k otázkám, ilustraci a písmům jsou v souboru [NOTICE.md](NOTICE.md).
